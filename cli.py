@@ -1,6 +1,4 @@
-from __future__ import annotations
-
-from typing import Optional
+from typing import List, Optional
 
 import typer
 
@@ -149,7 +147,7 @@ def publish(
     body: Optional[str] = typer.Option(None, "--body", help="Message body string", show_default=False),
     persistent: bool = typer.Option(False, "--persistent", help="Persistent message"),
     content_type: Optional[str] = typer.Option(None, "--content-type", help="Content type of the message", show_default=False),
-    header: list[str] = typer.Option([], "--header", help="Header key=value (repeatable)", show_default=False),
+    header: List[str] = typer.Option([], "--header", help="Header key=value (repeatable)", show_default=False),
 ) -> None:
     """Publish a message to a queue."""
     config = load_config()
@@ -178,7 +176,7 @@ def consume(
     json: bool = typer.Option(False, "--json", help="Output messages as JSON"),
     pretty: bool = typer.Option(False, "--pretty", help="Pretty-print JSON bodies"),
     jq: Optional[str] = typer.Option(None, "--jq", help="jq-style filter expression (e.g. .event.id)", show_default=False),
-    header: Optional[list[str]] = typer.Option(None, "--header", help="Filter by header key=value (repeatable)", show_default=False),
+    header: Optional[List[str]] = typer.Option(None, "--header", help="Filter by header key=value (repeatable)", show_default=False),
 ) -> None:
     """Consume messages continuously from a queue."""
     config = load_config()
