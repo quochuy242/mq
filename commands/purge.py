@@ -1,24 +1,47 @@
 from __future__ import annotations
 
-import pika
-from pika.exceptions import ChannelClosedByBroker
+import sys
 
 from mq.config import MQConfig
-from mq.connection import create_channel
-from mq.utils import handle_error
+from mq.services.queue_service import QueueProbe, passive_declare, purge_queue
+from mq.utils import handle_error, is_json_mode, print_json, print_pairs
 
 
-def execute(config: MQConfig, queue: str) -> None:
+def execute(config: MQConfig, queue: str, assume_yes: bool = False, dry_run: bool = False) -> None:
+    probe = passive_declare(config, queue)
+    if not probe.exists:
+        reason = probe.error.detail if probe.error else "it was not found"
+        handle_error(f"Refusing to purge '{queue}': {reason}")
+        return
+
+    doomed = probe.ready or 0
+    if not assume_yes and sys.stdin.isatty() and not is_json_mode():
+        print(f"Queue '{queue}' holds {doomed:,} message(s).")
+        answer = input(f"Purge them? [y/N] ").strip().lower()
+        if answer not in ("y", "yes"):
+            print("Aborted.")
+            return
+
+    if dry_run:
+        if is_json_mode():
+            print_json({"queue": queue, "purged": False, "would_remove": doomed})
+        else:
+            print_pairs(
+                [("Queue", queue), ("Would remove", f"{doomed:,}"), ("Purged", "no (--dry-run)")],
+                title="Dry run",
+            )
+        return
+
     try:
-        conn, channel = create_channel(config)
-        method = channel.queue_purge(queue=queue)
-        conn.close()
-        msg_count = method.method.message_count if method else 0
-        print(f"Queue '{queue}' purged")
-        print(f"  Removed messages: {msg_count}")
-    except ChannelClosedByBroker as e:
-        handle_error(f"Queue not found or channel error: {e}")
-    except pika.exceptions.AMQPConnectionError as e:
-        handle_error(f"Connection failed: {e}")
+        removed = purge_queue(config, queue)
     except Exception as e:
-        handle_error("Unexpected error", e)
+        handle_error(f"Cannot purge queue '{queue}'", e)
+        return
+
+    if is_json_mode():
+        print_json({"queue": queue, "purged": True, "messages_removed": removed})
+        return
+    print_pairs(
+        [("Queue", queue), ("Messages removed", f"{removed:,}")],
+        title="Queue purged",
+    )

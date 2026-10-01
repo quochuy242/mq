@@ -1,22 +1,49 @@
 from __future__ import annotations
 
-import pika
+import sys
 
 from mq.config import MQConfig
-from mq.connection import create_channel
-from mq.utils import handle_error
+from mq.services.queue_service import delete_queue
+from mq.utils import handle_error, is_json_mode, print_json, print_pairs
+from mq.utils.output import warn
 
 
-def execute(config: MQConfig, queue: str) -> None:
+def execute(
+    config: MQConfig,
+    queue: str,
+    if_unused: bool = False,
+    if_empty: bool = False,
+    assume_yes: bool = False,
+) -> None:
+    if not assume_yes and sys.stdin.isatty() and not is_json_mode():
+        if if_unused or if_empty:
+            condition = " and ".join(
+                part for part, on in (("unused", if_unused), ("empty", if_empty)) if on
+            )
+            prompt = f"Delete queue '{queue}' if it is {condition}? [y/N] "
+        else:
+            prompt = f"Delete queue '{queue}' and all of its messages? [y/N] "
+        answer = input(prompt).strip().lower()
+        if answer not in ("y", "yes"):
+            print("Aborted.")
+            return
+
     try:
-        conn, channel = create_channel(config)
-        method = channel.queue_delete(queue=queue)
-        conn.close()
-        msg_count = method.method.message_count if method and hasattr(method.method, "message_count") else 0
-        print(f"Queue deleted: '{queue}'")
-        if msg_count:
-            print(f"  Messages removed: {msg_count}")
-    except pika.exceptions.AMQPConnectionError as e:
-        handle_error(f"Connection failed: {e}")
+        removed = delete_queue(config, queue, if_unused=if_unused, if_empty=if_empty)
     except Exception as e:
-        handle_error("Unexpected error", e)
+        handle_error(f"Cannot delete queue '{queue}'", e)
+        return
+
+    if is_json_mode():
+        print_json({"queue": queue, "deleted": True, "messages_removed": removed})
+        return
+
+    pairs: list[tuple[str, object]] = [("Queue", queue), ("Deleted", "yes")]
+    if removed:
+        pairs.append(("Messages removed", f"{removed:,}"))
+    if if_unused or if_empty:
+        conditions = ", ".join(
+            part for part, on in (("if-unused", if_unused), ("if-empty", if_empty)) if on
+        )
+        pairs.append(("Conditions", conditions))
+    print_pairs(pairs, title="Queue deleted")

@@ -1,0 +1,36 @@
+[project]
+name = "mq"
+version = "1.0.0"
+description = "RabbitMQ CLI that works entirely over AMQP 0-9-1, with no management port"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "certifi>=2025.1.31",
+    "orjson>=3.11.9",
+    "pika>=1.4.4",
+    "pyyaml>=6.0.3",
+    "typer>=0.27.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pyinstaller>=6.22.0",
+]
+
+[project.scripts]
+mq = "mq.cli:app"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+# This repository directory *is* the `mq` package: modules import each other as
+# `mq.config`, `mq.commands.…`, which only works when the parent of this folder
+# is on sys.path. The mapping below makes setuptools reproduce that layout, so
+# the installed package is importable in the ordinary way.
+[tool.setuptools]
+package-dir = { "mq" = "." }
+packages = ["mq", "mq.commands", "mq.services", "mq.utils"]
+
+[tool.setuptools.package-data]
+mq = ["py.typed"]

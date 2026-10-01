@@ -1,104 +1,107 @@
 from __future__ import annotations
 
-from uuid import uuid4
-
-import pika
-from pika.exceptions import ChannelClosedByBroker
-
 from mq.config import MQConfig
-from mq.connection import create_connection
+from mq.services.diagnostic_service import (
+    broker_info,
+    probe_permissions,
+)
+from mq.utils import handle_error, is_json_mode, print_json, print_pairs
 
 
-def _probe_permission(
-    config: MQConfig, method: str, queue: str
-) -> bool | str | None:
-    connection = create_connection(config)
-    channel = connection.channel()
-    try:
-        if method == "configure":
-            channel.queue_declare(queue=queue, auto_delete=False)
-            return True
-        elif method == "write":
-            channel.basic_publish(exchange="", routing_key=queue, body=b"")
-            return True
-        elif method == "read":
-            channel.basic_get(queue=queue, auto_ack=True)
-            return True
-        return None
-    except ChannelClosedByBroker:
-        return False
-    except Exception as e:
-        return f"error: {e}"
-    finally:
-        try:
-            channel.close()
-        except Exception:
-            pass
-        try:
-            connection.close()
-        except Exception:
-            pass
+def _permission_display(value: bool | None) -> str:
+    if value is True:
+        return "yes"
+    if value is False:
+        return "no"
+    return "n/a"
 
 
-def _probe_permissions(config: MQConfig) -> dict[str, bool | str | None] | None:
-    probe_queue = f"mq-perm-probe-{uuid4().hex[:8]}"
-    perms: dict[str, bool | str | None] = {}
-
-    perms["configure"] = _probe_permission(config, "configure", probe_queue)
-
-    if perms.get("configure") is True:
-        perms["write"] = _probe_permission(config, "write", probe_queue)
-        perms["read"] = _probe_permission(config, "read", probe_queue)
-
-        ch = None
-        try:
-            conn = create_connection(config)
-            ch = conn.channel()
-            ch.queue_delete(queue=probe_queue)
-        except Exception:
-            pass
-        finally:
-            if ch:
-                try:
-                    ch.close()
-                except Exception:
-                    pass
-            try:
-                conn.close()
-            except Exception:
-                pass
-    else:
-        perms["write"] = None
-        perms["read"] = None
-
-    return perms
-
-
-def execute(config: MQConfig, queue: str | None = None) -> None:
+def execute(config: MQConfig, queue: str | None = None, probe: bool = True) -> None:
     if queue:
         from mq.commands.info_queue import execute as queue_info
 
         queue_info(config, queue)
         return
-    print(f"Host:       {config.host}")
-    print(f"Port:       {config.port}")
-    print(f"TLS:        {'Yes' if config.ssl else 'No'}")
-    print(f"VHost:      {config.vhost}")
-    print(f"Username:   {config.username}")
-    print(f"Timeout:    {config.connection_timeout}s")
-    print(f"Heartbeat:  {config.heartbeat}s")
 
-    perms = _probe_permissions(config)
-    if perms:
-        print("Permissions (AMQP probe):")
-        for name in ("configure", "write", "read"):
-            val = perms.get(name)
-            if val is True:
-                display = "Yes"
-            elif val is False:
-                display = "No (access refused)"
-            elif val is None:
-                display = "N/A"
-            else:
-                display = str(val)
-            print(f"  {name:<12} {display}")
+    local: list[tuple[str, object]] = [
+        ("Host", config.host),
+        ("Port", config.port),
+        ("TLS", "yes" if config.ssl else "no"),
+        ("TLS verify", "yes" if config.ssl_verify else "no (insecure)"),
+        ("VHost", config.vhost),
+        ("Username", config.username),
+        ("Auth", config.auth),
+        ("Config from", config.describe_source()),
+        ("Heartbeat", f"{config.heartbeat}s"),
+        ("Connect timeout", f"{config.connection_timeout}s"),
+        ("Blocked timeout", f"{config.blocked_connection_timeout}s"),
+    ]
+
+    remote: dict[str, object] = {}
+    error: str | None = None
+    if probe:
+        try:
+            remote = broker_info(config)
+        except Exception as e:
+            error = str(e)
+    else:
+        error = "skipped (--no-probe)"
+
+    permissions = None
+    if probe:
+        try:
+            permissions = probe_permissions(config)
+        except Exception:
+            permissions = None
+
+    if is_json_mode():
+        payload: dict[str, object] = {
+            "connection": {
+                "host": config.host,
+                "port": config.port,
+                "tls": config.ssl,
+                "vhost": config.vhost,
+                "username": config.username,
+                "auth": config.auth,
+                "source": config.describe_source(),
+            },
+            "broker": remote,
+            "permissions": permissions.to_dict() if permissions else None,
+        }
+        if error:
+            payload["broker_error"] = error
+        print_json(payload)
+        return
+
+    print_pairs(local, title="Connection")
+    if remote:
+        print()
+        pairs = [
+            ("Product", remote.get("product")),
+            ("Version", remote.get("version")),
+            ("Cluster", remote.get("cluster_name")),
+            ("Information", remote.get("information")),
+            ("Frame max", remote.get("frame_max")),
+            ("Channel max", remote.get("channel_max")),
+            ("Heartbeat", remote.get("heartbeat")),
+        ]
+        capabilities = remote.get("capabilities") or {}
+        if isinstance(capabilities, dict):
+            enabled = [name for name, on in capabilities.items() if on]
+            pairs.append(("Capabilities", ", ".join(enabled) if enabled else "(none)"))
+        print_pairs(pairs, title="Broker")
+
+    if permissions:
+        print()
+        pairs = [
+            ("Configure", _permission_display(permissions.configure)),
+            ("Write", _permission_display(permissions.write)),
+            ("Read", _permission_display(permissions.read)),
+            ("Method", permissions.mode),
+        ]
+        for key, detail in (permissions.details or {}).items():
+            pairs.append((f"{key} detail", detail))
+        print_pairs(pairs, title="Permissions (AMQP probe)")
+    elif error:
+        print()
+        print(f"  Broker probe skipped: {error}")

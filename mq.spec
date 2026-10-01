@@ -1,13 +1,30 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+import os
+
 from PyInstaller.building.build_main import Analysis, PYZ, EXE, COLLECT
+
+# Derive paths from the spec location so the build works on any machine.
+# SPECPATH is injected by PyInstaller; fall back to this file's directory.
+_HERE = os.path.abspath(globals().get('SPECPATH') or os.path.dirname(os.path.abspath(__file__)))
+# The repo dir holds the entrypoint; its parent is what makes `mq.*` importable.
+_PATHEX = [_HERE, os.path.dirname(_HERE)]
+
+# Ship certifi's CA bundle so the frozen binary has a usable trust store.
+try:
+    import certifi
+
+    certifi_datas = [(certifi.where(), 'certifi')]
+except Exception:
+    certifi_datas = []
 
 a = Analysis(
     ['cli.py'],
-    pathex=['/home/quochuy242/project/mq', '/home/quochuy242/project'],
+    pathex=_PATHEX,
     binaries=[],
-    datas=[],
+    datas=certifi_datas,
     hiddenimports=[
+        'certifi',
         'pika',
         'pika.adapters.blocking_connection',
         'pika.adapters',
@@ -26,6 +43,12 @@ a = Analysis(
         'rich.console',
         'shellingham',
         'yaml',
+        'mq.commands',
+        'mq.commands.info_queue',
+        'mq.commands.inventory_cmd',
+        'mq.services.discovery',
+        'mq.inventory',
+        'mq.errors',
     ],
     hookspath=[],
     hooksconfig={},

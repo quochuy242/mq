@@ -1,13 +1,28 @@
 from mq.utils.helpers import (
-    _debug,
     handle_error,
     is_json,
+    jq_filter,
+    parse_header_filters,
     parse_headers,
     pretty_print_json,
     pretty_print_message,
+    properties_to_dict,
+    report,
     set_debug,
 )
-from mq.utils.output import print_json, print_table
+from mq.utils.output import (
+    accent,
+    dim,
+    fail,
+    header,
+    ok,
+    print_json,
+    print_pairs,
+    print_table,
+    set_color,
+    status_marker,
+    warn,
+)
 
 _json: bool = False
 _trace: bool = False
@@ -29,3 +44,8 @@ def set_trace(enabled: bool) -> None:
 
 def is_trace() -> bool:
     return _trace
+
+
+def echo_json(data: object) -> None:
+    """Print a JSON document. In text mode it is still valid JSON, by design."""
+    print_json(data)
